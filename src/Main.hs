@@ -174,6 +174,13 @@ removeCurrentSolution = do
                              |  lit <- map (MkLit . fromInteger . toInteger) [0..(n-1)]]
 
 
+entryToInt :: Entry -> Int
+entryToInt Blank = 0
+entryToInt (Letter i) = i + 1
+
+removeSolution :: Env' => Solution -> IO Bool
+removeSolution (Solution sol) = addClause' [neg (entryValue ((i,j),entryToInt $ (sol!i)!j))| i<-sx,j<-sx]
+
 
 prettyHints :: AllHints -> String
 prettyHints (AllHints t r b l s) = 
@@ -221,19 +228,33 @@ growPuzzle (choice:space') entries = do
        else do 
          -- We found an unsatisfiable set of hints.
          True <- solve ?solver (map entryValue entries)
+         putStrLn "found puzzle"
          generateHints
 
 generateHints :: Env' => IO AllHints
 generateHints = do
-       Solution sol <- getSolution (puzzle ?full)
-       print $ Solution sol
-       removeCurrentSolution
+       s@(Solution sol) <- getSolution (puzzle ?full)
+       removeSolution s
        let space = [((3,i),getLetter (Vector.toList (sol ! i))) | i <- sx]
                    ++ [((0,i),getLetter [(sol!j)!i | j<-sx]) | i <- sx]
                    ++ [((1,i),getLetter (reverse $ Vector.toList (sol ! i))) | i <- sx]
                    ++ [((2,i),getLetter $ reverse [(sol!j)!i | j<-sx]) | i <- sx]
        space' <- shuffleM space
-       minimize space' []
+       result <- minimize space' []
+       -- We minimised the set of hints. Now we just verify that we indeed
+       -- have a unique solution.
+       deleteSolver ?solver
+       solver <- newSolver
+       let ?solver = solver
+       f <- genFull
+       conFull f
+       let set = map hintValue result
+       sat <- solve ?solver set
+       when (not sat) (error "solution is wrong")
+       removeSolution s
+       sat' <- solve ?solver set
+       when sat' (error "solution is wrong")
+       return(getAllHints ?size result)
     where getLetter [] = error "Internal error: cannot find letter in solution!"
           getLetter (Blank : r) = getLetter r
           getLetter (Letter l : _) = l + 1
@@ -248,23 +269,10 @@ entryValue ((i,j),l) = (((puzzle ?full) ! i) ! j) ! l
 
 
 
-minimize :: Env' => [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO AllHints
-minimize [] acc = do 
-  -- We minimised the set of hints. Now we just verify that we indeed
-  -- have a unique solution.
-    deleteSolver ?solver
-    solver <- newSolver
-    let ?solver = solver
-    f <- genFull
-    conFull f
-    let set = map hintValue acc
-    sat <- solve ?solver set
-    when (not sat) (error "solution is wrong")
-    removeCurrentSolution
-    sat' <- solve ?solver set
-    when sat' (error "solution is wrong")
-    return (getAllHints ?size acc)
-minimize (h: r) acc = do sat <- solve ?solver (map hintValue (r ++ acc))
+minimize :: Env' => [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO [((Int, Int), Int)]
+minimize [] acc = return acc
+minimize (h: r) acc = do putStrLn "minimize"
+                         sat <- solve ?solver (map hintValue (r ++ acc))
                          if sat then minimize r (h:acc)
                             else minimize r acc
 

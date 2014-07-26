@@ -96,6 +96,15 @@ conField l = do addClause' $ Vector.toList l
 conFields :: Env => Puzzle -> IO ()
 conFields p = sequence_ [conField ((p!i)!j) | i <- sx, j <- sx]
 
+-- generate contstraits that avoid ambiguous configurations
+conAmbFields :: Env => Puzzle -> IO ()
+conAmbFields p = when (?size >= 2) $ do
+                 addClauses [ map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)
+                            ] | i <- range, j <- range, di<-[0..i-1]++[i+1..(?size-1)]
+                            ,dj<-[j+1..(?size-1)], l <- lx, f<- fx, l/=f]
+
+    where range = [0..(?size-2)]
+
 -- fields must be different letters (however, both can be blank)
 conDiffFields :: Env => Field -> Field -> IO ()
 conDiffFields l1 l2 = do 
@@ -116,7 +125,7 @@ conColumns p = do
   addClauses [[((p!i!)c)!l | i <- sx] | c <- sx, l <- lx]
 
 conPuzzle :: Env => Puzzle -> IO ()
-conPuzzle p = conRows p >> conColumns p >> conFields p
+conPuzzle p = conRows p >> conColumns p >> conFields p >> conAmbFields p
 
 data Entry = Blank
            | Letter Int
@@ -199,8 +208,9 @@ search size letters = do
 growPuzzle :: Env' => [(Int,Int)] -> [((Int,Int),Int)] -> IO AllHints
 -- reset search if we hit a hint selection with
 -- multiple solutions
-growPuzzle [] _ = growPuzzle entryPositions []
+growPuzzle [] _ = print "reset" >> growPuzzle entryPositions []
 growPuzzle space entries = do
+       print "grow puzzle"
        (choice, space') <- pick space
        letter <- randomRIO (0,?letters)
        let entries' = (choice,letter): entries
@@ -214,14 +224,16 @@ growPuzzle space entries = do
 growHintsGuided :: Env' => IO AllHints
 growHintsGuided = do
        Solution sol <- getSolution (puzzle ?full)
+       print $ Solution sol
        removeCurrentSolution
        let space = [((3,i),getLetter (Vector.toList (sol ! i))) | i <- sx]
                    ++ [((0,i),getLetter [(sol!j)!i | j<-sx]) | i <- sx]
                    ++ [((1,i),getLetter (reverse $ Vector.toList (sol ! i))) | i <- sx]
                    ++ [((2,i),getLetter $ reverse [(sol!j)!i | j<-sx]) | i <- sx]
        loop space []
-    where loop [] _ = growPuzzle entryPositions []
+    where loop [] _ = print "reset" >> growPuzzle entryPositions []
           loop space hints = do 
+                    print "grow hints"
                     (choice, space') <- pick space
                     let hints' = choice: hints
                     sat <- solve ?solver (map hintValue hints')

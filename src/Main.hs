@@ -125,13 +125,15 @@ instance Show Entry where
     show Blank = " "
     show (Letter l) = [iterate succ 'A' !! l]
 
-newtype Solution = Solution {unSolution :: [[Entry]]}
+newtype Solution = Solution {unSolution :: Vector (Vector (Entry))}
 
 instance Show Solution where
-    show = unlines . map (unwords . map show) . unSolution
+    show = unlines . map (unwords . map show . Vector.toList) . Vector.toList . unSolution
 
 getSolution :: Env => Puzzle -> IO Solution
-getSolution p = liftM Solution $ sequence [ sequence [ getEntry f | f <- Vector.toList r] | r <- Vector.toList p ]
+getSolution p = liftM Solution $ liftM Vector.fromList $ 
+                sequence [ liftM Vector.fromList $ 
+                           sequence [ getEntry f | f <- Vector.toList r] | r <- Vector.toList p ]
 
 getHints :: Env => Vector Field -> IO [Entry]
 getHints h = sequence [ getEntry f | f <- Vector.toList h]
@@ -152,16 +154,15 @@ getEntry l = do Just b <- modelValue ?solver (l!0)
                          let Just n = findIndex (== Just True) res
                          return $ Letter n
 
--- To be called after a successful 'solve'. It tries to find another
--- solution.
-solveAgain :: Solver -> [Lit] -> IO Bool
-solveAgain solver set = do 
-  n <- minisat_num_vars solver 
-  addClause solver =<<
-            sequence [(modelValue solver lit >>= (\ (Just b) ->
+-- Adds clause to avoid the currently found solution.
+removeCurrentSolution :: Env => IO Bool
+removeCurrentSolution = do 
+  n <- minisat_num_vars ?solver 
+  addClause ?solver =<<
+            sequence [(modelValue ?solver lit >>= (\ (Just b) ->
                               return (if b then neg lit else lit)))
                              |  lit <- map (MkLit . fromInteger . toInteger) [0..(n-1)]]
-  solve solver set
+
 
 
 prettyHints :: AllHints -> String
@@ -177,12 +178,11 @@ prettyHints (AllHints t r b l s) =
           rows = zipWith (\l r -> show l ++ divider ++ show r ++ "\n") (Vector.toList l) (Vector.toList r)
           size = Vector.length t
 
-type Env' = (Env, ?space :: ([(Int,Int)]), 
-             ?hints :: [((Int,Int),Int)], ?full :: Full)
+type Env' = (Env, ?full :: Full)
 
--- complete list of hint positions
-hintPositions :: Env => [(Int,Int)]
-hintPositions = [ (side,i) | side <- [0..3], i<- sx] :: [(Int,Int)]
+-- complete list of entry positions
+entryPositions :: Env => [(Int,Int)]
+entryPositions = [ (i,j) | i <- sx, j<- sx] :: [(Int,Int)]
 
 
 search :: Int -> Int -> IO AllHints
@@ -194,46 +194,50 @@ search size letters = do
   f <- genFull
   conFull f
   let ?full = f
-      ?space = hintPositions
-      ?hints = []
-  growHints
+  growPuzzle entryPositions []
 
-growHints :: Env' => IO AllHints
-growHints = case ?space of
-     -- reset search if we hit a hint selection with
-     -- multiple solutions
-     [] -> let ?space = hintPositions
-               ?hints = []
-           in growHints
-     _ -> do
-       (choice, space') <- pick ?space
-       letter <- randomRIO (1,?letters)
-       let hints' = (choice,letter): ?hints
-       sat <- solve ?solver (map hintValue hints')
-       if sat then let ?space = space'
-                       ?hints = hints'
-                   in growHints
+growPuzzle :: Env' => [(Int,Int)] -> [((Int,Int),Int)] -> IO AllHints
+-- reset search if we hit a hint selection with
+-- multiple solutions
+growPuzzle [] _ = growPuzzle entryPositions []
+growPuzzle space entries = do
+       (choice, space') <- pick space
+       letter <- randomRIO (0,?letters)
+       let entries' = (choice,letter): entries
+       sat <- solve ?solver (map entryValue entries')
+       if sat then growPuzzle space' entries'
        else do 
-         -- We found an unsatisfiable set of hints. We
-         -- backtrack and check whether we found a set of
-         -- hints with a unique solution.
-         let set = map hintValue ?hints
-         solve ?solver set
-         sat <- solveAgain ?solver set
-         if sat then do 
-             -- Solution is not unique. Reset the
-             -- solver and start growing the hints.
-             deleteSolver ?solver
-             solver <- newSolver
-             let ?solver = solver
-             f <- genFull
-             conFull f
-             let ?full = f
-             growHints
-         else minimize ?hints []
+         -- We found an unsatisfiable set of hints.
+         True <- solve ?solver (map entryValue entries)
+         growHintsGuided
+
+growHintsGuided :: Env' => IO AllHints
+growHintsGuided = do
+       Solution sol <- getSolution (puzzle ?full)
+       removeCurrentSolution
+       let space = [((3,i),getLetter (Vector.toList (sol ! i))) | i <- sx]
+                   ++ [((0,i),getLetter [(sol!j)!i | j<-sx]) | i <- sx]
+                   ++ [((1,i),getLetter (reverse $ Vector.toList (sol ! i))) | i <- sx]
+                   ++ [((2,i),getLetter $ reverse [(sol!j)!i | j<-sx]) | i <- sx]
+       loop space []
+    where loop [] _ = growPuzzle entryPositions []
+          loop space hints = do 
+                    (choice, space') <- pick space
+                    let hints' = choice: hints
+                    sat <- solve ?solver (map hintValue hints')
+                    if sat then loop space' hints' else minimize hints' []
+          getLetter [] = error "Internal error: cannot find letter in solution!"
+          getLetter (Blank : r) = getLetter r
+          getLetter (Letter l : _) = l + 1
+                          
+
 -- turn a hint position and letter into a literal
 hintValue :: Env' => ((Int, Int), Int) -> Lit
 hintValue ((h,i),l) = (([top, right, bottom , left]!! h) (hints ?full) ! i) ! l
+
+entryValue :: Env' => ((Int, Int), Int) -> Lit
+entryValue ((i,j),l) = (((puzzle ?full) ! i) ! j) ! l
+
 
 pick l = do i <- randomRIO (0,length l -1)
             let (l1, choice:l2) = splitAt i l
@@ -250,8 +254,10 @@ minimize [] acc = do
     conFull f
     let set = map hintValue acc
     sat <- solve ?solver set
-    sat' <- solveAgain ?solver set
-    when (not sat || sat') (error "solution is wrong")
+    when (not sat) (error "solution is wrong")
+    removeCurrentSolution
+    sat' <- solve ?solver set
+    when sat' (error "solution is wrong")
     return (getAllHints ?size acc)
 minimize (h: r) acc = do sat <- solve ?solver (map hintValue (r ++ acc))
                          if sat then minimize r (h:acc)

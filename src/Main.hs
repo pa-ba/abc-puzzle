@@ -7,7 +7,7 @@ module Main where
 import Control.Monad
 import Data.List
 import qualified Data.Vector as Vector
-import Data.Vector (Vector, (!))
+import Data.Vector (Vector, (!),(//))
 import MiniSat
 import Safe
 import System.Environment
@@ -136,10 +136,13 @@ getSolution p = liftM Solution $ sequence [ sequence [ getEntry f | f <- Vector.
 getHints :: Env => Vector Field -> IO [Entry]
 getHints h = sequence [ getEntry f | f <- Vector.toList h]
 
-getAllHints :: Env => Hints -> IO AllHints
-getAllHints (Hints t r b l) = liftM4 AllHints (getHints t) (getHints r) (getHints b) (getHints l)
+getAllHints :: Int -> [((Int,Int),Int)] -> AllHints
+getAllHints size hints = (AllHints t r b l (length hints))
+    where [t,r,b,l] = [ emp // [ (i,Letter (letter-1)) | ((s',i),letter) <- hints, s' == s] | s <- [0..3]]       
+          emp = Vector.replicate size Blank
 
-data AllHints = AllHints {atop, aright, abottom, aleft :: [Entry]} deriving Show
+
+data AllHints = AllHints {atop, aright, abottom, aleft :: Vector Entry, hintSize :: Int} deriving Show
 
 getEntry :: Env => Field -> IO Entry
 getEntry l = do Just b <- modelValue ?solver (l!0)
@@ -162,15 +165,16 @@ solveAgain solver set =
 
 
 prettyHints :: AllHints -> String
-prettyHints (AllHints t r b l) = " | " ++ (intercalate " | " $ map show t) ++ " | \n"
-                                 ++ rule
-                                 ++ intercalate rule rows
-                                 ++ rule
-                                 ++ " | " ++ (intercalate " | " $ map show b) ++ " | \n"
+prettyHints (AllHints t r b l s) = " | " ++ (intercalate " | " $ map show $ Vector.toList t) ++ " | \n"
+                                   ++ rule
+                                   ++ intercalate rule rows
+                                   ++ rule
+                                   ++ " | " ++ (intercalate " | " $ map show $ Vector.toList b) ++ " | \n\n"
+                                   ++ "number of hints: " ++ show s ++ "\n"
     where rule = "-" ++ concat (replicate size "+---") ++ "+-\n"
           divider = concat (replicate size "|   ") ++ "|"
-          rows = zipWith (\l r -> show l ++ divider ++ show r ++ "\n") l r
-          size = length t
+          rows = zipWith (\l r -> show l ++ divider ++ show r ++ "\n") (Vector.toList l) (Vector.toList r)
+          size = Vector.length t
 
 type Env' = (Env, ?space :: ([(Int,Int)]), 
              ?hints :: [((Int,Int),Int)], ?full :: Full)
@@ -247,7 +251,7 @@ minimize [] acc = do
     sat <- solve ?solver set
     sat' <- solveAgain ?solver set
     when (not sat || sat') (error "solution is wrong")
-    getAllHints (hints f)
+    return (getAllHints ?size acc)
 minimize (h: r) acc = do sat <- solve ?solver (map hintValue (r ++ acc))
                          if sat then minimize r (h:acc)
                             else minimize r acc

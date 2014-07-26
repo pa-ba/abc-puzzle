@@ -255,11 +255,13 @@ minimize (h: r) acc = do sat <- solve ?solver (map hintValue (r ++ acc))
 
 main = do c <- getArgs
           case c of 
-            [size,letters] -> case (readMay size, readMay letters) of
-                                (Just size, Just letters) | size >= letters ->
-                                    search size letters >>= (putStr . prettyHints)
-                                _ -> usage
+            [size,letters] -> 
+                case (readMay size, readMay letters) of
+                  (Just size, Just letters)
+                    | size < letters -> putStrLn "The the number of letters may not be larger than the puzzle size."
+                    | letters < 1 -> putStrLn "The the number of letters must be a positive integer"
+                    | otherwise -> search size letters >>= (putStr . prettyHints)
+                  _ -> usage
             _ -> usage
     where usage = do name <- getProgName
                      putStrLn $ "usage: " ++ name ++ " <puzzle size> <number of letters>"
-                              ++ "\n\nThe the number of letters may not be larger than the puzzle size."

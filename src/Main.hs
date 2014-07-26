@@ -155,22 +155,23 @@ getEntry l = do Just b <- modelValue ?solver (l!0)
 -- To be called after a successful 'solve'. It tries to find another
 -- solution.
 solveAgain :: Solver -> [Lit] -> IO Bool
-solveAgain solver set =  
-                     do n <- minisat_num_vars solver 
-                        addClause solver =<<
-                                  sequence [(modelValue solver lit >>= (\ (Just b) ->
-                                                    return (if b then neg lit else lit)))
-                                                   |  lit <- map (MkLit . fromInteger . toInteger) [0..(n-1)]]
-                        solve solver set
+solveAgain solver set = do 
+  n <- minisat_num_vars solver 
+  addClause solver =<<
+            sequence [(modelValue solver lit >>= (\ (Just b) ->
+                              return (if b then neg lit else lit)))
+                             |  lit <- map (MkLit . fromInteger . toInteger) [0..(n-1)]]
+  solve solver set
 
 
 prettyHints :: AllHints -> String
-prettyHints (AllHints t r b l s) = " | " ++ (intercalate " | " $ map show $ Vector.toList t) ++ " | \n"
-                                   ++ rule
-                                   ++ intercalate rule rows
-                                   ++ rule
-                                   ++ " | " ++ (intercalate " | " $ map show $ Vector.toList b) ++ " | \n\n"
-                                   ++ "number of hints: " ++ show s ++ "\n"
+prettyHints (AllHints t r b l s) = 
+  " | " ++ (intercalate " | " $ map show $ Vector.toList t) ++ " | \n"
+        ++ rule
+        ++ intercalate rule rows
+        ++ rule
+        ++ " | " ++ (intercalate " | " $ map show $ Vector.toList b) ++ " | \n\n"
+        ++ "number of hints: " ++ show s ++ "\n"
     where rule = "-" ++ concat (replicate size "+---") ++ "+-\n"
           divider = concat (replicate size "|   ") ++ "|"
           rows = zipWith (\l r -> show l ++ divider ++ show r ++ "\n") (Vector.toList l) (Vector.toList r)
@@ -198,38 +199,38 @@ search size letters = do
   growHints
 
 growHints :: Env' => IO AllHints
-growHints = do case ?space of
-                 -- reset search if we hit a hint selection with
-                 -- multiple solutions
-                 [] -> let ?space = hintPositions
-                           ?hints = []
-                       in growHints
-                 _ -> do
-                   (choice, space') <- pick ?space
-                   letter <- randomRIO (1,?letters)
-                   let hints' = (choice,letter): ?hints
-                   sat <- solve ?solver (map hintValue hints')
-                   if sat then let ?space = space'
-                                   ?hints = hints'
-                               in growHints
-                   else do 
-                     -- We found an unsatisfiable set of hints. We
-                     -- backtrack and check whether we found a set of
-                     -- hints with a unique solution.
-                     let set = map hintValue ?hints
-                     solve ?solver set
-                     sat <- solveAgain ?solver set
-                     if sat then do 
-                              -- Solution is not unique. Reset the
-                              -- solver and start growing the hints.
-                              deleteSolver ?solver
-                              solver <- newSolver
-                              let ?solver = solver
-                              f <- genFull
-                              conFull f
-                              let ?full = f
-                              growHints
-                     else minimize ?hints []
+growHints = case ?space of
+     -- reset search if we hit a hint selection with
+     -- multiple solutions
+     [] -> let ?space = hintPositions
+               ?hints = []
+           in growHints
+     _ -> do
+       (choice, space') <- pick ?space
+       letter <- randomRIO (1,?letters)
+       let hints' = (choice,letter): ?hints
+       sat <- solve ?solver (map hintValue hints')
+       if sat then let ?space = space'
+                       ?hints = hints'
+                   in growHints
+       else do 
+         -- We found an unsatisfiable set of hints. We
+         -- backtrack and check whether we found a set of
+         -- hints with a unique solution.
+         let set = map hintValue ?hints
+         solve ?solver set
+         sat <- solveAgain ?solver set
+         if sat then do 
+             -- Solution is not unique. Reset the
+             -- solver and start growing the hints.
+             deleteSolver ?solver
+             solver <- newSolver
+             let ?solver = solver
+             f <- genFull
+             conFull f
+             let ?full = f
+             growHints
+         else minimize ?hints []
 -- turn a hint position and letter into a literal
 hintValue :: Env' => ((Int, Int), Int) -> Lit
 hintValue ((h,i),l) = (([top, right, bottom , left]!! h) (hints ?full) ! i) ! l

@@ -12,6 +12,7 @@ import MiniSat
 import Safe
 import System.Environment
 
+import System.Random.Shuffle
 import System.Random
 
 type Puzzle = Vector (Vector Field) -- rows of columns
@@ -190,8 +191,6 @@ prettyHints (AllHints t r b l s) =
 type Env' = (Env, ?full :: Full)
 
 -- complete list of entry positions
-entryPositions :: Env => [(Int,Int)]
-entryPositions = [ (i,j) | i <- sx, j<- sx] :: [(Int,Int)]
 
 
 search :: Int -> Int -> IO AllHints
@@ -203,15 +202,18 @@ search size letters = do
   f <- genFull
   conFull f
   let ?full = f
-  growPuzzle entryPositions []
+  generateConfiguration
+
+generateConfiguration :: Env' => IO AllHints
+generateConfiguration = do space <- shuffleM [ (i,j) | i <- sx, j<- sx]
+                           growPuzzle space []
+
 
 growPuzzle :: Env' => [(Int,Int)] -> [((Int,Int),Int)] -> IO AllHints
 -- reset search if we hit a hint selection with
 -- multiple solutions
-growPuzzle [] _ = print "reset" >> growPuzzle entryPositions []
-growPuzzle space entries = do
-       print "grow puzzle"
-       (choice, space') <- pick space
+growPuzzle [] _ = generateConfiguration
+growPuzzle (choice:space') entries = do
        letter <- randomRIO (0,?letters)
        let entries' = (choice,letter): entries
        sat <- solve ?solver (map entryValue entries')
@@ -219,10 +221,10 @@ growPuzzle space entries = do
        else do 
          -- We found an unsatisfiable set of hints.
          True <- solve ?solver (map entryValue entries)
-         growHintsGuided
+         generateHints
 
-growHintsGuided :: Env' => IO AllHints
-growHintsGuided = do
+generateHints :: Env' => IO AllHints
+generateHints = do
        Solution sol <- getSolution (puzzle ?full)
        print $ Solution sol
        removeCurrentSolution
@@ -230,15 +232,9 @@ growHintsGuided = do
                    ++ [((0,i),getLetter [(sol!j)!i | j<-sx]) | i <- sx]
                    ++ [((1,i),getLetter (reverse $ Vector.toList (sol ! i))) | i <- sx]
                    ++ [((2,i),getLetter $ reverse [(sol!j)!i | j<-sx]) | i <- sx]
-       loop space []
-    where loop [] _ = print "reset" >> growPuzzle entryPositions []
-          loop space hints = do 
-                    print "grow hints"
-                    (choice, space') <- pick space
-                    let hints' = choice: hints
-                    sat <- solve ?solver (map hintValue hints')
-                    if sat then loop space' hints' else minimize hints' []
-          getLetter [] = error "Internal error: cannot find letter in solution!"
+       space' <- shuffleM space
+       minimize space' []
+    where getLetter [] = error "Internal error: cannot find letter in solution!"
           getLetter (Blank : r) = getLetter r
           getLetter (Letter l : _) = l + 1
                           
@@ -251,9 +247,6 @@ entryValue :: Env' => ((Int, Int), Int) -> Lit
 entryValue ((i,j),l) = (((puzzle ?full) ! i) ! j) ! l
 
 
-pick l = do i <- randomRIO (0,length l -1)
-            let (l1, choice:l2) = splitAt i l
-            return (choice, l1++l2)
 
 minimize :: Env' => [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO AllHints
 minimize [] acc = do 

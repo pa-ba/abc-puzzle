@@ -42,8 +42,8 @@ genHints = liftM4 Hints side side side side
 genFull :: Env => IO Full
 genFull = liftM2 Full genPuzzle genHints
 
-addClause' :: Env => [Lit] -> IO Bool
-addClause' = addClause ?solver
+addClause' :: Env => [Lit] -> IO ()
+addClause' c = addClause ?solver c >> return ()
 
 addClauses :: Env => [[Lit]] -> IO ()
 addClauses = mapM_ addClause'
@@ -100,11 +100,29 @@ conFields p = sequence_ [conField ((p!i)!j) | i <- sx, j <- sx]
 -- generate contstraits that avoid ambiguous configurations
 conAmbFields :: Env => Puzzle -> IO ()
 conAmbFields p = when (?size >= 2) $ do
-                 addClauses [ map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)
-                            ] | i <- range, j <- range, di<-[0..i-1]++[i+1..(?size-1)]
-                            ,dj<-[j+1..(?size-1)], l <- lx, f<- fx, l/=f]
+      vis <- Vector.generateM ?size (\i -> Vector.generateM ?size (generate i))
+      let getVis i j = if i < low || j < low || i >= hi || j >= hi then
+                       [((vis!i)!j)] else []
+      addClauses [ map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)] 
+                           ++ getVis i j ++ getVis di dj ++ getVis i dj ++getVis di j
+                   | i <- range, j <- range, di<-[0..i-1]++[i+1..(?size-1)]
+                   , dj<-[j+1..(?size-1)], l <- lx, f<- fx, l/=f]
 
     where range = [0..(?size-2)]
+          low = ?size - ?letters + 1
+          hi = ?letters - 1
+          generate i j = if i < low || j < low || i >= hi || j >= hi
+                         then do 
+                           lit <- genLit 
+                           con lit i j
+                           return lit
+                         else return (error "position is not on the fringe")
+          con lit i j = do 
+            when (i < low) $ addClause' (lit : [neg (((p!i')!j)!0) |i'<-[0..i-1]])
+            when (j < low) $ addClause' (lit : [neg (((p!i)!j')!0) |j'<-[0..j-1]])
+            when (i >= hi) $ addClause' (lit : [neg (((p!i')!j)!0) |i'<-[i+1..(?size-1)]])
+            when (j >= hi) $ addClause' (lit : [neg (((p!i)!j')!0) |j'<-[j+1..(?size-1)]])
+
 
 -- fields must be different letters (however, both can be blank)
 conDiffFields :: Env => Field -> Field -> IO ()
@@ -126,7 +144,7 @@ conColumns p = do
   addClauses [[((p!i!)c)!l | i <- sx] | c <- sx, l <- lx]
 
 conPuzzle :: Env => Puzzle -> IO ()
-conPuzzle p = conRows p >> conColumns p >> conFields p >> conAmbFields p
+conPuzzle p = conRows p >> conColumns p >> conFields p
 
 data Entry = Blank
            | Letter Int
@@ -178,7 +196,7 @@ entryToInt :: Entry -> Int
 entryToInt Blank = 0
 entryToInt (Letter i) = i + 1
 
-removeSolution :: Env' => Solution -> IO Bool
+removeSolution :: Env' => Solution -> IO ()
 removeSolution (Solution sol) = addClause' [neg (entryValue ((i,j),entryToInt $ (sol!i)!j))| i<-sx,j<-sx]
 
 
@@ -208,6 +226,7 @@ search size letters = do
       ?letters = letters
   f <- genFull
   conFull f
+  conAmbFields (puzzle f)
   let ?full = f
   generateConfiguration
 
@@ -228,33 +247,25 @@ growPuzzle (choice:space') entries = do
        else do 
          -- We found an unsatisfiable set of hints.
          True <- solve ?solver (map entryValue entries)
-         putStrLn "found puzzle"
          generateHints
 
 generateHints :: Env' => IO AllHints
 generateHints = do
        s@(Solution sol) <- getSolution (puzzle ?full)
+       deleteSolver ?solver
+       solver <- newSolver
+       let ?solver = solver
+       f <- genFull
+       conFull f
+       let ?full = f
        removeSolution s
        let space = [((3,i),getLetter (Vector.toList (sol ! i))) | i <- sx]
                    ++ [((0,i),getLetter [(sol!j)!i | j<-sx]) | i <- sx]
                    ++ [((1,i),getLetter (reverse $ Vector.toList (sol ! i))) | i <- sx]
                    ++ [((2,i),getLetter $ reverse [(sol!j)!i | j<-sx]) | i <- sx]
        space' <- shuffleM space
-       result <- minimize space' []
-       -- We minimised the set of hints. Now we just verify that we indeed
-       -- have a unique solution.
-       deleteSolver ?solver
-       solver <- newSolver
-       let ?solver = solver
-       f <- genFull
-       conFull f
-       let set = map hintValue result
-       sat <- solve ?solver set
-       when (not sat) (error "solution is wrong")
-       removeSolution s
-       sat' <- solve ?solver set
-       when sat' (error "solution is wrong")
-       return(getAllHints ?size result)
+       sat <- solve ?solver (map hintValue space')
+       minimize sat space' []
     where getLetter [] = error "Internal error: cannot find letter in solution!"
           getLetter (Blank : r) = getLetter r
           getLetter (Letter l : _) = l + 1
@@ -268,13 +279,38 @@ entryValue :: Env' => ((Int, Int), Int) -> Lit
 entryValue ((i,j),l) = (((puzzle ?full) ! i) ! j) ! l
 
 
+-- TODO: implement bisection
 
-minimize :: Env' => [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO [((Int, Int), Int)]
-minimize [] acc = return acc
-minimize (h: r) acc = do putStrLn "minimize"
-                         sat <- solve ?solver (map hintValue (r ++ acc))
-                         if sat then minimize r (h:acc)
-                            else minimize r acc
+-- bisection :: Env' => [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO [((Int, Int), Int)]
+-- bisection hints space = do 
+--   let (new,space') = splitAt (length / 2) space
+--       hints' = hints ++ space
+--       sat <- solve ?solver (map hintValue (r ++ acc))
+
+--       if sat then minimize r (h:acc)
+--              else minimize r acc
+
+minimize :: Env' => Bool -> [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO AllHints
+minimize True [] _ = generateConfiguration
+minimize False [] result = do
+       -- We minimised the set of hints. Now we just verify that we indeed
+       -- have a unique solution.
+            deleteSolver ?solver
+            solver <- newSolver
+            let ?solver = solver
+            f <- genFull
+            conFull f
+            let set = map hintValue result
+            sat <- solve ?solver set
+            when (not sat) (error "solution is wrong: not satisfiable!")
+            s <- getSolution (puzzle ?full)
+            removeSolution s
+            sat' <- solve ?solver set
+            when sat' (error "solution is wrong: not unique!")
+            return(getAllHints ?size result)
+minimize sat (h: r) acc = do sat' <- solve ?solver (map hintValue (r ++ acc))
+                             if sat' then minimize sat r (h:acc)
+                             else minimize sat' r acc
 
 
 main = do c <- getArgs

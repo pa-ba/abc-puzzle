@@ -279,17 +279,6 @@ entryValue :: Env' => ((Int, Int), Int) -> Lit
 entryValue ((i,j),l) = (((puzzle ?full) ! i) ! j) ! l
 
 
--- TODO: implement bisection
-
--- bisection :: Env' => [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO [((Int, Int), Int)]
--- bisection hints space = do 
---   let (new,space') = splitAt (length / 2) space
---       hints' = hints ++ space
---       sat <- solve ?solver (map hintValue (r ++ acc))
-
---       if sat then minimize r (h:acc)
---              else minimize r acc
-
 minimize :: Env' => Bool -> [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO AllHints
 minimize True [] _ = generateConfiguration
 minimize False [] result = do

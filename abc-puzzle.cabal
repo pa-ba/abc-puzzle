@@ -1,7 +1,11 @@
 name:                abc-puzzle
 version:             0.1
-synopsis:            Generate instances of the ABC logic puzzle.
--- description:         
+synopsis:            Generate instances of the ABC Logic Puzzle.
+description:         This program generate instances of the ABC Logic Puzzle
+                     (<http://en.wikipedia.org/wiki/Buchstabensalat_%28logic_puzzle%29>).
+                     The implementation uses the MiniSat SAT solver (<http://minisat.se/>)
+                     to guide the search for a valid puzzle. Each generated puzzle has one
+                     unique solution.
 homepage:            https://github.com/pa-ba/abc-puzzle
 bug-reports:         https://github.com/pa-ba/abc-puzzle/issues
 license:             BSD3

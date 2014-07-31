@@ -232,8 +232,19 @@ growPuzzle (choice:space') entries = do
              space = concatMap getLetters sx
          sat <- solve ?solver (map hintValue space)
          if sat then generateConfiguration -- not unique, start again
-         else do space' <- shuffleM space
-                 minimize space' []
+         else do -- check whether solution is it really unique
+                 -- (we excluded some previous solutions)
+           deleteSolver ?solver
+           solver <- newSolver
+           let ?solver = solver
+           f <- genFull
+           conFull f
+           removeSolution s
+           sat <- solve ?solver (map hintValue space)
+           if sat then generateConfiguration -- not unique, start again
+           else do
+             space' <- shuffleM space
+             minimize space' []
     where getLetter = foldr getLetterRun (error "Internal error: cannot find letter in solution!")
           getLetterRun Blank r = r
           getLetterRun (Letter l) _ = l + 1

@@ -175,14 +175,14 @@ removeSolution (Solution sol) = addClause' [neg (entryValue ((i,j),entryToInt $ 
 
 prettyHints :: AllHints -> String
 prettyHints (AllHints t r b l s) = 
-  " | " ++ (intercalate " | " $ map show $ Vector.toList t) ++ " | \n"
+  "  | " ++ (intercalate " | " $ map show $ Vector.toList t) ++ " |  \n"
         ++ rule
         ++ intercalate rule rows
         ++ rule
-        ++ " | " ++ (intercalate " | " $ map show $ Vector.toList b) ++ " | \n\n"
+        ++ "  | " ++ (intercalate " | " $ map show $ Vector.toList b) ++ " |  \n\n"
         ++ "number of hints: " ++ show s ++ "\n"
-    where rule = "-" ++ concat (replicate size "+---") ++ "+-\n"
-          divider = concat (replicate size "|   ") ++ "|"
+    where rule = "--" ++ concat (replicate size "+---") ++ "+--\n"
+          divider = concat (replicate size " |  ") ++ " | "
           rows = zipWith (\l r -> show l ++ divider ++ show r ++ "\n") (Vector.toList l) (Vector.toList r)
           size = Vector.length t
 

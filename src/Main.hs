@@ -97,33 +97,6 @@ conField l = do addClause' $ Vector.toList l
 conFields :: Env => Puzzle -> IO ()
 conFields p = sequence_ [conField ((p!i)!j) | i <- sx, j <- sx]
 
--- generate contstraits that avoid ambiguous configurations
-conAmbFields :: Env => Puzzle -> IO ()
-conAmbFields p = when (?size >= 2) $ do
-      vis <- Vector.generateM ?size (\i -> Vector.generateM ?size (generate i))
-      let getVis i j = if i < low || j < low || i >= hi || j >= hi then
-                       [((vis!i)!j)] else []
-      addClauses [ map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)] 
-                           ++ getVis i j ++ getVis di dj ++ getVis i dj ++getVis di j
-                   | i <- range, j <- range, di<-[0..i-1]++[i+1..(?size-1)]
-                   , dj<-[j+1..(?size-1)], l <- lx, f<- fx, l/=f]
-
-    where range = [0..(?size-2)]
-          low = ?size - ?letters + 1
-          hi = ?letters - 1
-          generate i j = if i < low || j < low || i >= hi || j >= hi
-                         then do 
-                           lit <- genLit 
-                           con lit i j
-                           return lit
-                         else return (error "position is not on the fringe")
-          con lit i j = do 
-            when (i < low) $ addClause' (lit : [neg (((p!i')!j)!0) |i'<-[0..i-1]])
-            when (j < low) $ addClause' (lit : [neg (((p!i)!j')!0) |j'<-[0..j-1]])
-            when (i >= hi) $ addClause' (lit : [neg (((p!i')!j)!0) |i'<-[i+1..(?size-1)]])
-            when (j >= hi) $ addClause' (lit : [neg (((p!i)!j')!0) |j'<-[j+1..(?size-1)]])
-
-
 -- fields must be different letters (however, both can be blank)
 conDiffFields :: Env => Field -> Field -> IO ()
 conDiffFields l1 l2 = do 
@@ -226,7 +199,6 @@ search size letters = do
       ?letters = letters
   f <- genFull
   conFull f
-  conAmbFields (puzzle f)
   let ?full = f
   generateConfiguration
 
@@ -265,7 +237,8 @@ generateHints = do
                    ++ [((2,i),getLetter $ reverse [(sol!j)!i | j<-sx]) | i <- sx]
        space' <- shuffleM space
        sat <- solve ?solver (map hintValue space')
-       minimize sat space' []
+       if sat then generateConfiguration -- not unique, start again
+       else minimize space' []
     where getLetter [] = error "Internal error: cannot find letter in solution!"
           getLetter (Blank : r) = getLetter r
           getLetter (Letter l : _) = l + 1
@@ -279,9 +252,8 @@ entryValue :: Env' => ((Int, Int), Int) -> Lit
 entryValue ((i,j),l) = (((puzzle ?full) ! i) ! j) ! l
 
 
-minimize :: Env' => Bool -> [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO AllHints
-minimize True [] _ = generateConfiguration
-minimize False [] result = do
+minimize :: Env' => [((Int, Int), Int)] -> [((Int, Int), Int)] -> IO AllHints
+minimize [] result = do
        -- We minimised the set of hints. Now we just verify that we indeed
        -- have a unique solution.
             deleteSolver ?solver
@@ -297,9 +269,9 @@ minimize False [] result = do
             sat' <- solve ?solver set
             when sat' (error "solution is wrong: not unique!")
             return(getAllHints ?size result)
-minimize sat (h: r) acc = do sat' <- solve ?solver (map hintValue (r ++ acc))
-                             if sat' then minimize sat r (h:acc)
-                             else minimize sat' r acc
+minimize (h: r) acc = do sat' <- solve ?solver (map hintValue (r ++ acc))
+                         if sat' then minimize r (h:acc)
+                         else minimize r acc
 
 
 main = do c <- getArgs

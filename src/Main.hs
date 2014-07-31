@@ -57,6 +57,9 @@ fx = [0 .. ?letters]
 sx :: Env => [Int]
 sx = [0 .. ?size - 1]
 
+sx_reverse :: Env => [Int]
+sx_reverse = [?size - 1, (?size - 2).. 0]
+
 
 conHint :: Env => Field  -- ^ hint field
         -> [Field] -- ^ neighbouring fields, the closest field is last
@@ -210,7 +213,7 @@ generateConfiguration = do space <- shuffleM [ (i,j) | i <- sx, j<- sx]
 growPuzzle :: Env' => [(Int,Int)] -> [((Int,Int),Int)] -> IO AllHints
 -- reset search if we hit a hint selection with
 -- multiple solutions
-growPuzzle [] _ = generateConfiguration
+growPuzzle [] _ = putStrLn "did not find a puzzle" >> generateConfiguration
 growPuzzle (choice:space') entries = do
        letter <- randomRIO (0,?letters)
        let entries' = (choice,letter): entries
@@ -219,29 +222,21 @@ growPuzzle (choice:space') entries = do
        else do 
          -- We found an unsatisfiable set of hints.
          True <- solve ?solver (map entryValue entries)
-         generateHints
-
-generateHints :: Env' => IO AllHints
-generateHints = do
-       s@(Solution sol) <- getSolution (puzzle ?full)
-       deleteSolver ?solver
-       solver <- newSolver
-       let ?solver = solver
-       f <- genFull
-       conFull f
-       let ?full = f
-       removeSolution s
-       let space = [((3,i),getLetter (Vector.toList (sol ! i))) | i <- sx]
-                   ++ [((0,i),getLetter [(sol!j)!i | j<-sx]) | i <- sx]
-                   ++ [((1,i),getLetter (reverse $ Vector.toList (sol ! i))) | i <- sx]
-                   ++ [((2,i),getLetter $ reverse [(sol!j)!i | j<-sx]) | i <- sx]
-       space' <- shuffleM space
-       sat <- solve ?solver (map hintValue space')
-       if sat then generateConfiguration -- not unique, start again
-       else minimize space' []
-    where getLetter [] = error "Internal error: cannot find letter in solution!"
-          getLetter (Blank : r) = getLetter r
-          getLetter (Letter l : _) = l + 1
+         s@(Solution sol) <- getSolution (puzzle ?full)
+         removeSolution s
+         let getLetters i = let soli = sol ! i
+                            in [((3,i),getLetter [soli!j | j<- sx]),
+                                ((0,i),getLetter [(sol!j)!i | j<-sx]),
+                                ((1,i),getLetter [soli!j | j<- sx_reverse]),
+                                ((2,i),getLetter [(sol!j)!i | j<-sx_reverse])]
+             space = concatMap getLetters sx
+         sat <- solve ?solver (map hintValue space)
+         if sat then generateConfiguration -- not unique, start again
+         else do space' <- shuffleM space
+                 minimize space' []
+    where getLetter = foldr getLetterRun (error "Internal error: cannot find letter in solution!")
+          getLetterRun Blank r = r
+          getLetterRun (Letter l) _ = l + 1
                           
 
 -- turn a hint position and letter into a literal

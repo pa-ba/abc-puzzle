@@ -136,7 +136,7 @@ conAmbFields p = when (?size >= 2) $ do
       let getVis i j = if i < low || j < low || i >= hi || j >= hi then
                        [((vis!i)!j)] else []
       addClauses [ map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)] 
-                           ++ getVis i j ++ getVis di dj ++ getVis i dj ++getVis di j
+                           ++ getVis i j ++ getVis di dj ++ if f /= 0 then getVis i dj ++getVis di j else []
                    | i <- range, j <- range, di<-[0..i-1]++[i+1..(?size-1)]
                    , dj<-[j+1..(?size-1)], l <- lx, f<- fx, l/=f]
 

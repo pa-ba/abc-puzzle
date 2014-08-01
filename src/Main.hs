@@ -132,20 +132,25 @@ conPuzzle p = conRows p >> conColumns p >> conFields p
 -- generate contstraits that avoid ambiguous configurations
 conAmbFields :: (?solver::Solver,?size::Int,?letters::Int) => Puzzle -> IO ()
 conAmbFields p = when (?size >= 2) $
-      addClauses =<< sequence 
-                   [ liftM (map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)] ++) 
-                   (if f==0 then halfVis i j di dj else fullVis i j di dj)
+      addClauses =<< (liftM concat (sequence 
+                   [ genClauses i j di dj
                    | i <- range, j <- range, di<-[0..i-1]++[i+1..(?size-1)]
-                   , dj<-[j+1..(?size-1)], l <- lx, f<- fx, l/=f]
+                   , dj<-[j+1..(?size-1)]]))
 
-    where range = [0..(?size-2)]
+    where genClauses :: Int -> Int -> Int -> Int -> IO [[Lit]]
+          genClauses i j di dj = do 
+            a <- getVis i j di dj
+            b <- getVis di dj i j
+            c <- getVis i dj di j
+            d <- getVis di j i dj
+            let half = a ++ b
+                full = half ++ c ++ d
+            return [map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)]
+                    ++ if f==0 then half else full 
+                    | l <- lx, f<- fx, l/=f]
+          range = [0..(?size-2)]
           low = ?size - ?letters + 1
           hi = ?letters - 1
-          halfVis :: Int -> Int -> Int -> Int -> IO [Lit]
-          halfVis i j i' j' = liftM concat $ sequence [getVis i j i' j', getVis i' j' i j]
-          fullVis :: Int -> Int -> Int -> Int -> IO [Lit]
-          fullVis i j i' j' = liftM concat $ sequence [getVis i j i' j', getVis i' j' i j,
-                                                       getVis i j' i' j, getVis i' j i j']
           getVis i j i' j' = if i < low || j < low || i >= hi || j >= hi
                              then do 
                                lit <- genLit 
@@ -282,8 +287,8 @@ growPuzzle (choice:space') entries = do
          -- We found an unsatisfiable set of hints.
          True <- solve ?solver (map entryValue entries)
          s@(Solution sol) <- getSolution (puzzle ?full)
-         putStrLn "solution:"
-         print s
+         -- putStrLn "solution:"
+         -- print s
          removeSolution s
          let getLetters i = let soli = sol ! i
                             in [((3,i),getLetter [soli!j | j<- sx]),
@@ -293,9 +298,9 @@ growPuzzle (choice:space') entries = do
              space = concatMap getLetters sx
          sat <- solve ?solver (map hintValue space)
          if sat then do
-                  s <- getSolution (puzzle ?full)
-                  putStrLn "alternative:"
-                  print s
+                  -- s <- getSolution (puzzle ?full)
+                  -- putStrLn "alternative:"
+                  -- print s
                   generateConfiguration -- not unique, start again
          else do -- check whether solution is it really unique
                  -- (we excluded some previous solutions)

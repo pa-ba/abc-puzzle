@@ -131,43 +131,50 @@ conPuzzle p = conRows p >> conColumns p >> conFields p
 
 -- generate contstraits that avoid ambiguous configurations
 conAmbFields :: (?solver::Solver,?size::Int,?letters::Int) => Puzzle -> IO ()
-conAmbFields p = when (?size >= 2) $ do
-      vis <- generateAM ?size (\i -> generateAM ?size (generate i))
-      let getVis i j = if i < low || j < low || i >= hi || j >= hi then
-                       [((vis!i)!j)] else []
-      addClauses [ map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)] 
-                           ++ getVis i j ++ getVis di dj ++ getVis i dj ++getVis di j
+conAmbFields p = when (?size >= 2) $
+      addClauses =<< sequence 
+                   [ liftM (map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)] ++) 
+                   (if f==0 then halfVis i j di dj else fullVis i j di dj)
                    | i <- range, j <- range, di<-[0..i-1]++[i+1..(?size-1)]
                    , dj<-[j+1..(?size-1)], l <- lx, f<- fx, l/=f]
 
     where range = [0..(?size-2)]
           low = ?size - ?letters + 1
           hi = ?letters - 1
-          generate i j = if i < low || j < low || i >= hi || j >= hi
-                         then do 
-                           lit <- genLit 
-                           con lit i j
-                           return lit
-                         else return (error "position is not on the fringe")
+          halfVis :: Int -> Int -> Int -> Int -> IO [Lit]
+          halfVis i j i' j' = liftM concat $ sequence [getVis i j i' j', getVis i' j' i j]
+          fullVis :: Int -> Int -> Int -> Int -> IO [Lit]
+          fullVis i j i' j' = liftM concat $ sequence [getVis i j i' j', getVis i' j' i j,
+                                                       getVis i j' i' j, getVis i' j i j']
+          getVis i j i' j' = if i < low || j < low || i >= hi || j >= hi
+                             then do 
+                               lit <- genLit 
+                               con lit i j i' j'
+                               return [lit]
+                             else return []
           when' True x = liftM (:[]) x
           when' False _ = return []
-          con lit i j = 
-            let left = when' (i < low) $ do
-                          lit' <- genLit 
-                          addClauses [[neg lit', ((p!i')!j)!0] |i'<-[0..i-1]]
-                          return lit'
-                top = when' (j < low) $ do
-                          lit' <- genLit 
-                          addClauses [[neg lit', ((p!i)!j')!0] |j'<-[0..j-1]]
-                          return lit'
-                bottom = when' (i >= hi) $ do
-                          lit' <- genLit 
-                          addClauses [[neg lit', ((p!i')!j)!0] |i'<-[i+1..(?size-1)]]
-                          return lit'
-                right = when' (j >= hi) $ do
-                          lit' <- genLit 
-                          addClauses [[neg lit', ((p!i)!j')!0] |j'<-[j+1..(?size-1)]]
-                          return lit'
+          con lit i j di dj = 
+            let left = when' (i < low && di > i) $ do
+                          vis <- genLit 
+                          addClauses [[neg vis, ((p!i')!j)!0] |i'<-[0..i-1]]
+                          addClause' (neg vis : [neg (((p!i')!j)!0) | i'<-[i+1..di]])
+                          return vis
+                top = when' (j < low && dj > j) $ do
+                          vis <- genLit 
+                          addClauses [[neg vis, ((p!i)!j')!0] |j'<-[0..j-1]]
+                          addClause' (neg vis : [neg (((p!i)!j')!0) | j'<-[j+1..dj]])
+                          return vis
+                bottom = when' (i >= hi && di < i) $ do
+                          vis <- genLit 
+                          addClauses [[neg vis, ((p!i')!j)!0] |i'<-[i+1..(?size-1)]]
+                          addClause' (neg vis : [neg (((p!i')!j)!0) | i'<-[di..i-1]])
+                          return vis
+                right = when' (j >= hi && dj < j) $ do
+                          vis <- genLit 
+                          addClauses [[neg vis, ((p!i)!j')!0] |j'<-[j+1..(?size-1)]]
+                          addClause' (neg vis : [neg (((p!i)!j')!0) | j'<-[dj..j-1]])
+                          return vis
             in do lits <- sequence [left,top,bottom,right]
                   addClause' (neg lit : concat lits)
 
@@ -275,6 +282,8 @@ growPuzzle (choice:space') entries = do
          -- We found an unsatisfiable set of hints.
          True <- solve ?solver (map entryValue entries)
          s@(Solution sol) <- getSolution (puzzle ?full)
+         putStrLn "solution:"
+         print s
          removeSolution s
          let getLetters i = let soli = sol ! i
                             in [((3,i),getLetter [soli!j | j<- sx]),
@@ -283,7 +292,11 @@ growPuzzle (choice:space') entries = do
                                 ((2,i),getLetter [(sol!j)!i | j<-sx_reverse])]
              space = concatMap getLetters sx
          sat <- solve ?solver (map hintValue space)
-         if sat then generateConfiguration -- not unique, start again
+         if sat then do
+                  s <- getSolution (puzzle ?full)
+                  putStrLn "alternative:"
+                  print s
+                  generateConfiguration -- not unique, start again
          else do -- check whether solution is it really unique
                  -- (we excluded some previous solutions)
            deleteSolver ?solver

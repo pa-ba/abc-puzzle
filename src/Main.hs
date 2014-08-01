@@ -31,6 +31,9 @@ replicateAM l m = liftM (listArray (0,l-1)) (replicateM l m)
 replicateA :: Int -> a -> Array Int a
 replicateA l m = listArray (0,l-1) (replicate l m)
 
+generateAM :: Monad m => Int -> (Int -> m a) -> m (Array Int a)
+generateAM l f =  liftM (listArray (0,l')) (mapM f [0..l'])
+    where l' = l-1
 
 genField :: (?letters :: Int, ?solver :: Solver) => IO Field
 genField = replicateAM (?letters+1) genLit
@@ -125,6 +128,51 @@ conColumns p = do
 conPuzzle :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Puzzle -> IO ()
 conPuzzle p = conRows p >> conColumns p >> conFields p
 
+
+-- generate contstraits that avoid ambiguous configurations
+conAmbFields :: (?solver::Solver,?size::Int,?letters::Int) => Puzzle -> IO ()
+conAmbFields p = when (?size >= 2) $ do
+      vis <- generateAM ?size (\i -> generateAM ?size (generate i))
+      let getVis i j = if i < low || j < low || i >= hi || j >= hi then
+                       [((vis!i)!j)] else []
+      addClauses [ map neg [(((p!i)!j)!l), (((p!di)!dj)!l), (((p!i)!dj)!f), (((p!di)!j)!f)] 
+                           ++ getVis i j ++ getVis di dj ++ getVis i dj ++getVis di j
+                   | i <- range, j <- range, di<-[0..i-1]++[i+1..(?size-1)]
+                   , dj<-[j+1..(?size-1)], l <- lx, f<- fx, l/=f]
+
+    where range = [0..(?size-2)]
+          low = ?size - ?letters + 1
+          hi = ?letters - 1
+          generate i j = if i < low || j < low || i >= hi || j >= hi
+                         then do 
+                           lit <- genLit 
+                           con lit i j
+                           return lit
+                         else return (error "position is not on the fringe")
+          when' True x = liftM (:[]) x
+          when' False _ = return []
+          con lit i j = 
+            let left = when' (i < low) $ do
+                          lit' <- genLit 
+                          addClauses [[neg lit', ((p!i')!j)!0] |i'<-[0..i-1]]
+                          return lit'
+                top = when' (j < low) $ do
+                          lit' <- genLit 
+                          addClauses [[neg lit', ((p!i)!j')!0] |j'<-[0..j-1]]
+                          return lit'
+                bottom = when' (i >= hi) $ do
+                          lit' <- genLit 
+                          addClauses [[neg lit', ((p!i')!j)!0] |i'<-[i+1..(?size-1)]]
+                          return lit'
+                right = when' (j >= hi) $ do
+                          lit' <- genLit 
+                          addClauses [[neg lit', ((p!i)!j')!0] |j'<-[j+1..(?size-1)]]
+                          return lit'
+            in do lits <- sequence [left,top,bottom,right]
+                  addClause' (neg lit : concat lits)
+
+
+
 data Entry = Blank
            | Letter Int
 
@@ -203,6 +251,7 @@ search size letters = do
       ?letters = letters
   f <- genFull
   conFull f
+  conAmbFields (puzzle f)
   let ?full = f
   generateConfiguration
 
@@ -244,7 +293,7 @@ growPuzzle (choice:space') entries = do
            conFull f
            removeSolution s
            sat <- solve ?solver (map hintValue space)
-           if sat then generateConfiguration -- not unique, start again
+           if sat then   conAmbFields (puzzle f) >> generateConfiguration -- not unique, start again
            else do
              space' <- shuffleM space
              minimize space' []

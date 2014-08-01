@@ -1,5 +1,5 @@
 name:                abc-puzzle
-version:             0.2
+version:             0.2.1
 synopsis:            Generate instances of the ABC Logic Puzzle.
 description:         This program generate instances of the ABC Logic Puzzle
                      (<http://en.wikipedia.org/wiki/Buchstabensalat_%28logic_puzzle%29>).

@@ -6,8 +6,7 @@ module Main where
 
 import Control.Monad
 import Data.List
-import qualified Data.Vector as Vector
-import Data.Vector (Vector, (!),(//))
+import Data.Array.IArray
 import MiniSat
 import Safe
 import System.Environment
@@ -15,10 +14,10 @@ import System.Environment
 import System.Random.Shuffle
 import System.Random
 
-type Puzzle = Vector (Vector Field) -- rows of columns
-type Field = Vector Lit
+type Puzzle = Array Int (Array Int Field) -- rows of columns
+type Field = Array Int Lit
 data Hints = Hints {
-      top, right, bottom, left :: Vector Field}
+      top, right, bottom, left :: Array Int Field}
 
 
 data Full = Full { puzzle :: Puzzle, hints :: Hints}
@@ -26,16 +25,22 @@ data Full = Full { puzzle :: Puzzle, hints :: Hints}
 genLit :: (?solver :: Solver) => IO Lit
 genLit = newLit ?solver
 
+replicateAM :: Monad m => Int -> m a -> m (Array Int a)
+replicateAM l m = liftM (listArray (0,l-1)) (replicateM l m)
+
+replicateA :: Int -> a -> Array Int a
+replicateA l m = listArray (0,l-1) (replicate l m)
+
 
 genField :: (?letters :: Int, ?solver :: Solver) => IO Field
-genField = Vector.replicateM (?letters+1) genLit
+genField = replicateAM (?letters+1) genLit
 
 genPuzzle :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => IO Puzzle
-genPuzzle = Vector.replicateM ?size $ Vector.replicateM ?size genField
+genPuzzle = replicateAM ?size $ replicateAM ?size genField
 
 genHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => IO Hints
 genHints = liftM4 Hints side side side side
-    where side = Vector.replicateM ?size genField
+    where side = replicateAM ?size genField
 
 genFull :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => IO Full
 genFull = liftM2 Full genPuzzle genHints
@@ -68,21 +73,21 @@ conHint hint neigh = addClauses[ hint ! l :  hint ! 0 : neg (f ! l) : blanks r
     where blanks = map (\f -> neg (f!0))
 
 
-conBottomHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Vector Field -> Puzzle -> IO ()
+conBottomHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Array Int Field -> Puzzle -> IO ()
 conBottomHints h p = sequence_ [conHint (h!i) [(p!j)!i|j<-[(?letters-1) .. (?size-1)]]| i <- sx]
-                     >> mapM_ conField (Vector.toList h)
+                     >> mapM_ conField (elems h)
 
-conRightHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Vector Field -> Puzzle -> IO ()
+conRightHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Array Int Field -> Puzzle -> IO ()
 conRightHints h p = sequence_ [conHint (h!i) [(p!i)!j|j<-[(?letters-1) .. (?size-1)]]| i <- sx]
-                     >> mapM_ conField (Vector.toList h)
+                     >> mapM_ conField (elems h)
 
-conTopHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Vector Field -> Puzzle -> IO ()
+conTopHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Array Int Field -> Puzzle -> IO ()
 conTopHints h p = sequence_ [conHint (h!i) [(p!j)!i|j<-[(?size - ?letters),(?size - ?letters - 1) .. 0]]| i <- sx]
-                     >> mapM_ conField (Vector.toList h)
+                     >> mapM_ conField (elems h)
 
-conLeftHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Vector Field -> Puzzle -> IO ()
+conLeftHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Array Int Field -> Puzzle -> IO ()
 conLeftHints h p = sequence_ [conHint (h!i) [(p!i)!j|j<-[(?size - ?letters),(?size - ?letters - 1) .. 0]]| i <- sx]
-                     >> mapM_ conField (Vector.toList h)
+                     >> mapM_ conField (elems h)
 
 conHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Full -> IO ()
 conHints (Full p h) = conBottomHints (bottom h) p >> conRightHints (right h) p
@@ -92,7 +97,7 @@ conFull :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Full -> IO ()
 conFull full = conPuzzle (puzzle full) >> conHints full
 
 conField :: (?letters :: Int, ?solver :: Solver) => Field -> IO ()
-conField l = do addClause' $ Vector.toList l
+conField l = do addClause' $ elems l
                 addClauses [ [neg (l!i), neg (l!j)] | i <- fx, j <- [0 .. i-1]]
 
 conFields :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Puzzle -> IO ()
@@ -106,9 +111,9 @@ conDiffFields l1 l2 = do
 conRows :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Puzzle  -> IO ()
 conRows p = do
   -- fields must be different letters
-  sequence_ [conDiffFields (r!i) (r!j) | r <- Vector.toList p, i <- sx, j <- [0..i-1]] 
+  sequence_ [conDiffFields (r!i) (r!j) | r <- elems p, i <- sx, j <- [0..i-1]] 
   -- each letter must appear
-  addClauses [[(r!i)!l | i <- sx] | r <- Vector.toList p, l <- lx]
+  addClauses [[(r!i)!l | i <- sx] | r <- elems p, l <- lx]
 
 conColumns :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Puzzle  -> IO ()
 conColumns p = do 
@@ -127,26 +132,26 @@ instance Show Entry where
     show Blank = " "
     show (Letter l) = [iterate succ 'A' !! l]
 
-newtype Solution = Solution {unSolution :: Vector (Vector (Entry))}
+newtype Solution = Solution {unSolution :: Array Int (Array Int (Entry))}
 
 instance Show Solution where
-    show = unlines . map (unwords . map show . Vector.toList) . Vector.toList . unSolution
+    show = unlines . map (unwords . map show . elems) . elems . unSolution
 
 getSolution :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Puzzle -> IO Solution
-getSolution p = liftM Solution $ liftM Vector.fromList $ 
-                sequence [ liftM Vector.fromList $ 
-                           sequence [ getEntry f | f <- Vector.toList r] | r <- Vector.toList p ]
+getSolution p = liftM Solution $ liftM (listArray (0,?size-1)) $ 
+                sequence [ liftM (listArray (0,?size-1)) $ 
+                           sequence [ getEntry f | f <- elems r] | r <- elems p ]
 
-getHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Vector Field -> IO [Entry]
-getHints h = sequence [ getEntry f | f <- Vector.toList h]
+getHints :: (?size :: Int, ?letters :: Int, ?solver :: Solver) => Array Int Field -> IO [Entry]
+getHints h = sequence [ getEntry f | f <- elems h]
 
 getAllHints :: Int -> [((Int,Int),Int)] -> AllHints
 getAllHints size hints = (AllHints t r b l (length hints))
-    where [t,r,b,l] = [ emp // [ (i,Letter (letter-1)) | ((s',i),letter) <- hints, s' == s] | s <- [0..3]]       
-          emp = Vector.replicate size Blank
+    where [t,r,b,l] = [ emp // [ (i,Letter (letter-1)) | ((s',i),letter) <- hints, s' == s] | s <- [0..3]]
+          emp = replicateA size Blank
 
 
-data AllHints = AllHints {atop, aright, abottom, aleft :: Vector Entry, hintSize :: Int} deriving Show
+data AllHints = AllHints {atop, aright, abottom, aleft :: Array Int Entry, hintSize :: Int} deriving Show
 
 getEntry :: (?letters :: Int, ?solver :: Solver) => Field -> IO Entry
 getEntry l = do Just b <- modelValue ?solver (l!0)
@@ -176,16 +181,16 @@ removeSolution (Solution sol) = addClause' [neg (entryValue ((i,j),entryToInt $ 
 
 prettyHints :: AllHints -> String
 prettyHints (AllHints t r b l s) = 
-  "  | " ++ (intercalate " | " $ map show $ Vector.toList t) ++ " |  \n"
+  "  | " ++ (intercalate " | " $ map show $ elems t) ++ " |  \n"
         ++ rule
         ++ intercalate rule rows
         ++ rule
-        ++ "  | " ++ (intercalate " | " $ map show $ Vector.toList b) ++ " |  \n\n"
+        ++ "  | " ++ (intercalate " | " $ map show $ elems b) ++ " |  \n\n"
         ++ "number of hints: " ++ show s ++ "\n"
     where rule = "--" ++ concat (replicate size "+---") ++ "+--\n"
           divider = concat (replicate size " |  ") ++ " | "
-          rows = zipWith (\l r -> show l ++ divider ++ show r ++ "\n") (Vector.toList l) (Vector.toList r)
-          size = Vector.length t
+          rows = zipWith (\l r -> show l ++ divider ++ show r ++ "\n") (elems l) (elems r)
+          size = length $ indices t
 
 -- complete list of entry positions
 

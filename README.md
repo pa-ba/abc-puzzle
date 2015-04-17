@@ -1,6 +1,9 @@
 ABC Logic Puzzle Generator
 ==========================
 
+[![Build Status](https://travis-ci.org/pa-ba/abc-puzzle.svg?branch=master)](https://travis-ci.org/pa-ba/abc-puzzle)
+
+
 This program generates instances of the
 [ABC Logic Puzzle](http://en.wikipedia.org/wiki/Buchstabensalat_%28logic_puzzle%29).
 
